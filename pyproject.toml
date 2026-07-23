@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "computer-harness"
+version = "0.1.0"
+description = "The simplest, thinnest harness to control native macOS apps with your agent. Sibling to browser-harness."
+requires-python = ">=3.9"
+dependencies = [
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+    "pyobjc-framework-ApplicationServices>=10.0",
+    "pillow>=10.0",
+]
+
+[project.scripts]
+computer-harness = "computer_harness.run:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["computer_harness*"]

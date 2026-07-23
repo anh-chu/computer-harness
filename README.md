@@ -1,0 +1,86 @@
+# computer-harness
+
+The simplest, thinnest harness to control **native macOS apps** with your agent —
+and, by default, **without disturbing you**. A desktop sibling to browser-harness:
+same daemon + heredoc shape, but it drives any native app, not just Chrome.
+
+```bash
+computer-harness <<'PY'
+st = get_app_state("Notes")       # background screenshot + numbered a11y tree
+click("Notes", element_index=4)   # AXPress — runs in the background
+set_value("Notes", 7, "hello")    # set a text field directly, no keystrokes
+PY
+```
+
+## Why
+
+macOS's ChatGPT/Codex desktop app ships computer use whose best property is that
+**it doesn't disturb you** — the agent works in one app while you keep working in
+another. Under the hood that's OpenAI's `@oai/sky`: a signed helper that captures
+a specific window and acts through the accessibility API over a local socket.
+
+computer-harness rebuilds that architecture on **public Apple APIs** — no private
+entitlements, no dependency on OpenAI's binary:
+
+- **Input** — CoreGraphics `CGEvent` (global foreground) and `CGEventPostToPid`
+  + `AXUIElementPerformAction` / set-value (background, non-disturbing).
+- **Pixels** — `CGWindowListCreateImage` captures a window even when it's
+  occluded or not frontmost; `screencapture` for full-screen and video.
+- **Structure** — the `AXUIElement` accessibility tree, surfaced as an indexed,
+  clickable element list (sky's interaction model).
+
+## Two tiers
+
+- **Non-disturbing (default):** operate on a target app's window in the
+  background — no cursor move, no focus steal, so you keep working in the
+  foreground. `get_app_state`, `click`, `set_value`, `perform_action`,
+  `capture_window`, `list_windows`, plus passive `capture_screenshot` and screen
+  recording. Works reliably on standard AppKit apps.
+- **Foreground (explicit, interrupts you):** global cursor/keyboard for canvas
+  apps and games. `click_at_xy`, `type_text`, `press_key`, `drag`, `scroll`,
+  `activate_app`. Opt-in only.
+
+## Install
+
+macOS only (CoreGraphics, CGWindowList, Accessibility API).
+
+```bash
+git clone https://github.com/huytieu/computer-harness && cd computer-harness
+python3 -m venv .venv && .venv/bin/pip install -e .
+ln -sf "$PWD/.venv/bin/computer-harness" ~/.local/bin/computer-harness
+computer-harness --doctor
+```
+
+Grant the printed Python binary **Accessibility** and **Screen Recording** in
+System Settings → Privacy & Security (once). `--doctor` tells you what's missing.
+See [install.md](install.md) for details, [SKILL.md](SKILL.md) for the full
+workflow.
+
+## Security model — read before use
+
+computer-harness is a "run code as me" tool, like a shell. Specifically:
+
+- **It executes arbitrary Python from stdin as your user** (`run.py`) and can
+  synthesize input and read your screen. Only pipe it code you trust.
+- **The daemon is a standing proxy to your Accessibility + Screen Recording
+  grants.** Its control socket is `0700` (owner-only), so **another user cannot
+  reach it** — but *any process running as you* can connect and drive it, whether
+  or not that process was itself granted those TCC permissions. That is by design
+  for a single-user machine; on a shared account, treat the daemon as ambient
+  authority and stop it (`--restart` kills it) when unused.
+- **Screen captures may contain secrets.** Screenshots and recordings land
+  unencrypted in `~/.computer-harness/` (dirs `0700`, files `0600` — owner-only).
+  Nothing prunes them automatically; delete the directory to purge. Uninstalling
+  removes it.
+- **No network egress.** The tool makes no outbound connections and sends no
+  telemetry; the only socket is the local `AF_UNIX` control channel.
+
+## Status
+
+v0.1.0. macOS only. Verified end-to-end: background window capture, AX-action
+clicks, direct text set-value, full-screen foreground input, and desktop video
+recording — all through the CLI/daemon. Not affiliated with OpenAI.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
