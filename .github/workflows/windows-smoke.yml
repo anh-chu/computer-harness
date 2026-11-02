@@ -28,3 +28,4 @@ jobs:
         with:
           name: captures-${{ matrix.os }}
           path: ~/.computer-harness/
+          include-hidden-files: true
