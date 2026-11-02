@@ -710,7 +710,8 @@ def _do(ctrl, action):
     """Run one named action. Returns the action that ran, or None."""
     a = _AX_ALIASES.get(action.lower(), action)
     if a == "press":
-        for name in ("Invoke", "Toggle", "Select", "Expand", "DefaultAction"):
+        # Toggle first: checkboxes often expose Invoke too, via the MSAA proxy.
+        for name in ("Toggle", "Invoke", "Select", "Expand", "DefaultAction"):
             if _do_one(ctrl, name):
                 return name
         return None

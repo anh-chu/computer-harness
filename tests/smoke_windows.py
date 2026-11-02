@@ -93,15 +93,22 @@ def main():
         check("background window capture", shot and os.path.getsize(shot["path"]) > 0
               and not_blank(shot["path"]), shot)
 
+        def focus_kept(step):
+            fg = frontmost_app()
+            check(f"focus kept after {step}", fg["pid"] == fg_before["pid"], fg)
+
         btn = find(st, "ButtonControl", "Press me")
         r = click(TITLE, btn["index"])
         check("click via UIA", r["via"] in ("Invoke", "DefaultAction"), r)
+        focus_kept("click")
 
         edit = find(st, "EditControl")
         set_value(TITLE, edit["index"], "hello ✓")
+        focus_kept("set_value")
         box = find(st, "CheckBoxControl", "Check me")
         r = click(TITLE, box["index"])
         check("checkbox via UIA", r["via"] == "Toggle", r)
+        focus_kept("toggle")
 
         time.sleep(0.5)
         st2 = get_app_state(TITLE, screenshot=False)
@@ -110,8 +117,6 @@ def main():
         check("set_value", find(st2, "EditControl")["value"] == "hello ✓", find(st2, "EditControl"))
 
         check("cursor untouched", cursor() == cur_before, (cur_before, cursor()))
-        fg_after = frontmost_app()
-        check("focus untouched", fg_after["pid"] == fg_before["pid"], fg_after)
 
         # --- foreground tier ---
         a = activate_app(TITLE)
@@ -119,7 +124,8 @@ def main():
         st3 = get_app_state(TITLE, screenshot=False)
         e3 = find(st3, "EditControl")
         click(TITLE, e3["index"], method="foreground")
-        press_key("ctrl+a")
+        press_key("end")
+        press_key("shift+home")  # old WinForms text boxes ignore Ctrl+A
         type_text("typed")
         time.sleep(0.5)
         st4 = get_app_state(TITLE, screenshot=False)
