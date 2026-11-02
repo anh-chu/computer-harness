@@ -128,10 +128,10 @@ def main():
               dup.stderr.strip()[-200:])
         check("cache survives", len(find(TITLE, label="Check me")) == 1)
 
+        st2 = get_app_state(TITLE, screenshot=False, diff=True)  # vs the snapshot before the click
+        check("diff", any("Pressed" in line for line in st2["diff"]["added"]), st2["diff"])
         hit = wait_for(TITLE, label="Pressed", timeout=5)
         check("wait_for", hit["kind"] == "button", hit)
-        st2 = get_app_state(TITLE, screenshot=False, diff=True)
-        check("diff", any("Pressed" in line for line in st2["diff"]["added"]), st2["diff"])
         labels = [e["label"] for e in st2["elements"]]
         check("button reacted", "Pressed" in labels, labels)
         check("set_value", pick(st2, "EditControl")["value"] == "hello ✓", pick(st2, "EditControl"))
