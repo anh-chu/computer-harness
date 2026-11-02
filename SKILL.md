@@ -171,6 +171,7 @@ GIF "video" of a flow; `pixel_diff(before, after)` tints what changed.
 computer-harness --doctor     diagnose install, daemon, and TCC permissions
 computer-harness --status     daemon + permission status as JSON
 computer-harness --restart    stop the daemon (next call starts fresh, picks up code changes)
+computer-harness mcp          serve the helpers as MCP tools (see install.md)
 computer-harness --help
 ```
 

@@ -9,18 +9,16 @@ Quickest: `uv tool install git+https://github.com/anh-chu/computer-harness`
 puts `computer-harness` on `$PATH` (macOS or Windows). Grant the permissions in
 step 2 to the Python that `--doctor` prints.
 
+Add `[mcp]` for the MCP server:
+`uv tool install "computer-harness[mcp] @ git+https://github.com/anh-chu/computer-harness"`.
+
 From a clone instead:
 
-Already installed in this environment at `~/tools/computer-harness/` with a
-dedicated venv (`~/tools/computer-harness/.venv`) and a `computer-harness`
-symlink on `$PATH` (`~/.local/bin/computer-harness`).
-
-To recreate on a new machine:
-
 ```bash
+git clone https://github.com/anh-chu/computer-harness ~/tools/computer-harness
 cd ~/tools/computer-harness
 python3 -m venv .venv
-.venv/bin/pip install -e .          # installs pyobjc + pillow, registers the CLI
+.venv/bin/pip install -e .          # or -e ".[mcp]"; installs pyobjc + pillow, registers the CLI
 ln -sf ~/tools/computer-harness/.venv/bin/computer-harness ~/.local/bin/computer-harness
 ```
 
@@ -68,8 +66,12 @@ PY
     admin.py      daemon lifecycle + doctor
     helpers.py    model-facing verbs (pre-imported into heredocs)
     run.py        CLI entry
+    mcp_server.py MCP server: tools, bearer token, host allowlist, TLS
   agent-workspace/
     agent_helpers.py   evidence_shot / FlowRecorder / pixel_diff
+  tests/
+    test_common.py, test_mcp.py   unit tests (any OS)
+    smoke_macos.py, smoke_windows.py, smoke_mcp.py, bench_walk_windows.py
   SKILL.md
   install.md
 ```
@@ -80,6 +82,7 @@ PY
 - Log: `~/.computer-harness/ch-<name>.log`
 - Screenshots: `~/.computer-harness/screenshots/`
 - Recordings: `~/.computer-harness/recordings/`
+- MCP server: `~/.computer-harness/mcp-token`, `~/.computer-harness/mcp-tls/`
 
 ⚠ **Privacy:** screenshots and recordings capture whatever is on screen and may
 contain passwords, tokens, or private messages. They are stored **unencrypted**
@@ -98,8 +101,9 @@ busy daemon is waited for rather than replaced.
 
 ```bash
 computer-harness --restart          # stop the daemon
-rm ~/.local/bin/computer-harness
-rm -rf ~/tools/computer-harness/.venv ~/.computer-harness
+uv tool uninstall computer-harness  # if installed with uv; for a clone instead:
+rm ~/.local/bin/computer-harness ; rm -rf ~/tools/computer-harness/.venv
+rm -rf ~/.computer-harness          # captures, logs, MCP token and certificate
 # then remove the grants in System Settings if desired
 ```
 
@@ -122,7 +126,7 @@ random token that every client must send first.
 
 `tests/smoke_windows.py` drives a test window end to end and checks that the
 cursor and focus do not move. CI runs it on `windows-2022` and `windows-2025`,
-`tests/smoke_macos.py` on `macos-latest`, and `tests/test_common.py` everywhere.
+`tests/smoke_macos.py` on `macos-latest`, and the unit tests everywhere.
 
 ## MCP server
 

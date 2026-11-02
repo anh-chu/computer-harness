@@ -3,12 +3,14 @@
 The simplest, thinnest harness to control **native macOS and Windows apps** with your agent —
 and, by default, **without disturbing you**. A desktop sibling to browser-harness:
 same daemon + heredoc shape, but it drives any native app, not just Chrome.
+It also runs as an [MCP server](#mcp-server), locally or over HTTPS on your LAN.
 
 ```bash
 computer-harness <<'PY'
 st = get_app_state("Notes")       # background screenshot + numbered a11y tree
-click("Notes", element_index=4)   # AXPress — runs in the background
+click("Notes", label="New Note")  # press by label (or element_index=4), in the background
 set_value("Notes", 7, "hello")    # set a text field directly, no keystrokes
+wait_for("Notes", label="hello")  # re-snapshot until it shows up
 PY
 ```
 
@@ -119,14 +121,22 @@ computer-harness is a "run code as me" tool, like a shell. Specifically:
   than 7 days (`CH_KEEP_FILES`, `CH_KEEP_DAYS`; `0` turns a limit off). Delete
   the directory to purge.
 - **No network egress.** The tool makes no outbound connections and sends no
-  telemetry; the only socket is the local `AF_UNIX` control channel.
+  telemetry. The control channel is local: an `AF_UNIX` socket on macOS, a
+  loopback port with a per-run token on Windows.
+- **The MCP server listens on the network only when you ask** (`mcp --http`).
+  Anyone holding its token can drive this machine with the listed tools: treat
+  the token like a password, and see [MCP server](#mcp-server).
 
 ## Status
 
-v0.2.0. macOS and Windows. CI runs unit tests on Linux, macOS and Windows,
-and end-to-end tests on macOS (TextEdit) and Windows Server 2022/2025 (WinForms). Verified end-to-end: background window capture, AX-action
-clicks, direct text set-value, full-screen foreground input, and desktop video
-recording — all through the CLI/daemon. Not affiliated with OpenAI.
+v0.3.0. macOS and Windows; CLI and MCP server.
+
+CI runs unit tests on Linux, macOS and Windows, and end-to-end tests on macOS
+(TextEdit) and Windows Server 2022/2025 (a WinForms window): background capture
+and actions, set-value, label lookup, focus and cursor left alone, foreground
+input, recording (Windows), and the MCP server over HTTPS on the runner's LAN
+IP. Not tested yet: Claude Code as the MCP client, start-at-login setups.
+Not affiliated with OpenAI.
 
 ## License
 
