@@ -22,7 +22,6 @@ import os
 import secrets
 import socket
 import sys
-from pathlib import Path
 
 from . import helpers, ipc
 from .admin import ensure_daemon
@@ -272,7 +271,7 @@ def self_signed(host, extra=()):
             return cert_p, key_p, cert.fingerprint(hashes.SHA256()).hex(":")
 
     key = ec.generate_private_key(ec.SECP256R1())
-    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"computer-harness {socket.gethostname()}")])
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "computer-harness")])  # names live in the SAN
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
