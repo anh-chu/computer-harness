@@ -25,6 +25,7 @@ from ctypes import wintypes
 
 import psutil
 import uiautomation as auto  # sets per-monitor DPI awareness on import
+from uiautomation.uiautomation import _AutomationClient
 from PIL import Image, ImageGrab
 
 from . import common
@@ -587,7 +588,7 @@ _CACHE_REQ = None
 def _cache_request():
     global _CACHE_REQ
     if _CACHE_REQ is None:
-        req = auto._AutomationClient.instance().IUIAutomation.CreateCacheRequest()
+        req = _AutomationClient.instance().IUIAutomation.CreateCacheRequest()
         for pid in _CACHED:
             req.AddProperty(pid)
         _CACHE_REQ = req
@@ -620,7 +621,7 @@ def get_app_state(identifier, max_elements=400, capture=True):
 
     elements, live = [], []
     visited = [0]
-    uia = auto._AutomationClient.instance().IUIAutomation
+    uia = _AutomationClient.instance().IUIAutomation
     walker, req = uia.RawViewWalker, _cache_request()
 
     def walk(el, depth):

@@ -23,8 +23,6 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-def osa(script):
-    subprocess.run(["osascript", "-e", script], check=True, capture_output=True, timeout=30)
 
 
 def main():
@@ -38,8 +36,13 @@ def main():
         restart_daemon()
         sys.exit(1 if failures else 0)
 
-    osa('tell application "TextEdit" to make new document')
-    osa('tell application "Finder" to activate')
+    # `open` needs no Apple Events grant (osascript would block on a prompt).
+    doc = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ch-smoke.txt")
+    with open(doc, "w") as f:
+        f.write("start")
+    subprocess.run(["open", "-a", "TextEdit", doc], check=True, timeout=30)
+    wait_window("ch-smoke", timeout=20)
+    subprocess.run(["open", "-a", "Finder"], check=True, timeout=30)
     time.sleep(2)
     fg = frontmost_app()
     try:
@@ -66,8 +69,7 @@ def main():
         check("second daemon refused", "already running" in dup.stderr, dup.stderr.strip()[-200:])
         check("cache survives", len(find("TextEdit", role="text")) >= 1)
     finally:
-        subprocess.run(["osascript", "-e", 'tell application "TextEdit" to quit saving no'],
-                       capture_output=True)
+        subprocess.run(["pkill", "-x", "TextEdit"], capture_output=True)
 
     restart_daemon()
     check("daemon stops", not daemon_alive())

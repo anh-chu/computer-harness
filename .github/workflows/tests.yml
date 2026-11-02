@@ -46,14 +46,12 @@ jobs:
           git show 41dd0bd:computer_harness/engine_win.py > computer_harness/engine_win_old.py
           Start-Process explorer.exe C:\Windows\System32
           Start-Sleep 5
-          python tests/bench_walk_windows.py System32 bench.json
+          python tests/bench_walk_windows.py System32 $HOME\.computer-harness\bench.json
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: captures-${{ matrix.os }}
-          path: |
-            ~/.computer-harness/
-            bench.json
+          path: ~/.computer-harness/
           include-hidden-files: true
 
   macos-smoke:
