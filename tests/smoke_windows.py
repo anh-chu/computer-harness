@@ -39,7 +39,7 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-def find(st, role, label=None):
+def pick(st, role, label=None):
     for e in st["elements"]:
         if e["role"] == role and (label is None or e["label"] == label):
             return e
@@ -100,24 +100,41 @@ def main():
         check("background window capture", shot and os.path.getsize(shot["path"]) > 0
               and not_blank(shot["path"]), shot)
 
-        btn = find(st, "ButtonControl", "Press me")
-        r = click(TITLE, btn["index"])
-        check("click via UIA", r["via"] in ("Invoke", "DefaultAction"), r)
+        marked = shot.get("annotated_path")
+        check("annotated screenshot", marked and os.path.exists(marked)
+              and Image.open(marked).tobytes() != Image.open(shot["path"]).tobytes(), marked)
+        btn = pick(st, "ButtonControl", "Press me")
+        check("kind field", btn["kind"] == "button", btn)
+        small = get_app_state(TITLE, screenshot=False, interactive_only=True)
+        check("interactive_only", 0 < len(small["elements"]) < len(st["elements"])
+              and all(e["actions"] or e["settable"] for e in small["elements"]),
+              f"{len(small['elements'])} of {len(st['elements'])}")
+
+        r = click(TITLE, label="press me")
+        check("click by label via UIA", r["via"] in ("Invoke", "DefaultAction"), r)
         focus_kept("click")
 
-        edit = find(st, "EditControl")
+        edit = pick(st, "EditControl")
         set_value(TITLE, edit["index"], "hello ✓")
         focus_kept("set_value")
-        box = find(st, "CheckBoxControl", "Check me")
-        r = click(TITLE, box["index"])
+        r = click(TITLE, label="Check me", role="checkbox")
         check("checkbox via UIA", r["via"] == "Toggle", r)
         focus_kept("toggle")
 
-        time.sleep(0.5)
-        st2 = get_app_state(TITLE, screenshot=False)
+        # A second daemon must refuse to start and leave the cache alone.
+        dup = subprocess.run([sys.executable, "-m", "computer_harness.daemon", "default"],
+                             capture_output=True, text=True, timeout=30)
+        check("second daemon refused", dup.returncode == 0 and "already running" in dup.stderr,
+              dup.stderr.strip()[-200:])
+        check("cache survives", len(find(TITLE, label="Check me")) == 1)
+
+        hit = wait_for(TITLE, label="Pressed", timeout=5)
+        check("wait_for", hit["kind"] == "button", hit)
+        st2 = get_app_state(TITLE, screenshot=False, diff=True)
+        check("diff", any("Pressed" in line for line in st2["diff"]["added"]), st2["diff"])
         labels = [e["label"] for e in st2["elements"]]
         check("button reacted", "Pressed" in labels, labels)
-        check("set_value", find(st2, "EditControl")["value"] == "hello ✓", find(st2, "EditControl"))
+        check("set_value", pick(st2, "EditControl")["value"] == "hello ✓", pick(st2, "EditControl"))
 
         check("cursor untouched", cursor() == cur_before, (cur_before, cursor()))
 
@@ -125,15 +142,19 @@ def main():
         a = activate_app(TITLE)
         check("activate_app", a["foreground"], a)
         st3 = get_app_state(TITLE, screenshot=False)
-        e3 = find(st3, "EditControl")
+        t0 = time.time()
+        r = click(TITLE, label="Pressed")
+        check("no focus guard when app in front", not r["focus_restored"] and time.time() - t0 < 0.15,
+              (r, round(time.time() - t0, 3)))
+        e3 = pick(st3, "EditControl")
         click(TITLE, e3["index"], method="foreground")
         press_key("end")
         press_key("shift+home")  # old WinForms text boxes ignore Ctrl+A
         type_text("typed")
         time.sleep(0.5)
         st4 = get_app_state(TITLE, screenshot=False)
-        check("foreground typing", find(st4, "EditControl")["value"] == "typed",
-              find(st4, "EditControl"))
+        check("foreground typing", pick(st4, "EditControl")["value"] == "typed",
+              pick(st4, "EditControl"))
 
         full = capture_screenshot()
         check("full screenshot", full["width"] == info["width"] and not_blank(full["path"]), full)

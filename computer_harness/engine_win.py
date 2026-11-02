@@ -16,7 +16,6 @@ Limits vs macOS:
   - Nothing works on the secure desktop (lock screen, UAC prompt) or without an
     interactive session (services, SSH sessions).
 """
-import base64
 import ctypes
 import os
 import shutil
@@ -27,6 +26,9 @@ from ctypes import wintypes
 import psutil
 import uiautomation as auto  # sets per-monitor DPI awareness on import
 from PIL import Image, ImageGrab
+
+from . import common
+from .common import norm_button as _norm_button, recording_status, screenshot_data_url  # noqa: F401
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -140,17 +142,6 @@ def _key(vk=0, scan=0, flags=0):
 # Mouse
 # ---------------------------------------------------------------------------
 
-def _norm_button(b):
-    b = (b or "left").lower()
-    if b in ("l", "left"):
-        return "left"
-    if b in ("r", "right"):
-        return "right"
-    if b in ("m", "middle"):
-        return "middle"
-    return "left"
-
-
 def move_mouse(x, y):
     user32.SetCursorPos(int(round(x)), int(round(y)))
 
@@ -202,15 +193,11 @@ _VK.update({f"f{i}": 0x6F + i for i in range(1, 25)})
 _EXTENDED = {0x2D, 0x2E, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x5B, 0x5D, 0x2C}
 _MODS = {"control": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B}
 _KEY_ALIASES = {
-    "enter": "return", "esc": "escape", "backspace": "delete",
-    "del": "forwarddelete", "pgup": "pageup", "pgdn": "pagedown",
-    "arrowleft": "left", "arrowright": "right", "arrowup": "up", "arrowdown": "down",
-    "spacebar": "space", "ctrl": "control", "option": "alt", "opt": "alt",
+    "option": "alt", "opt": "alt",
     # macOS habit: cmd+c means ctrl+c here. Use "win" for the Windows key.
     "command": "control", "cmd": "control",
     "super": "win", "meta": "win", "windows": "win",
-    "control_l": "control", "control_r": "control", "shift_l": "shift",
-    "shift_r": "shift", "alt_l": "alt", "alt_r": "alt", "super_l": "win",
+    "alt_l": "alt", "alt_r": "alt", "super_l": "win",
     "super_r": "win", "meta_l": "win", "meta_r": "win",
 }
 
@@ -227,16 +214,8 @@ def type_text(text, per_char_delay=0.0):
 
 def press_key(chord):
     """Press a `+`-separated chord, e.g. 'ctrl+shift+t', 'Return', 'cmd+a' (= ctrl+a)."""
-    parts = [p.strip().lower() for p in str(chord).split("+") if p.strip()]
-    mods, key = [], None
-    for p in parts:
-        p = _KEY_ALIASES.get(p, p)
-        if p in _MODS:
-            mods.append(_MODS[p])
-        else:
-            key = p
-    if key is None:
-        raise ValueError(f"no non-modifier key in chord {chord!r}")
+    names, key = common.parse_chord(chord, _MODS, _KEY_ALIASES)
+    mods = [_MODS[m] for m in names]
     vk = _VK.get(key)
     if vk is None:
         raise ValueError(f"unknown key {key!r} in chord {chord!r}")
@@ -271,17 +250,11 @@ def capture_screenshot(path, region=None, resize_logical=True):
     return {"path": path, "width": img.width, "height": img.height, "scale": backing_scale()}
 
 
-def screenshot_data_url(path):
-    with open(path, "rb") as f:
-        return "data:image/png;base64," + base64.b64encode(f.read()).decode()
-
-
 # ---------------------------------------------------------------------------
 # Screen video recording via ffmpeg gdigrab (Windows has no built-in CLI
 # recorder). Passive: no input, no focus change.
 # ---------------------------------------------------------------------------
 REC_EXT = ".mp4"
-_RECORDERS = {}  # name -> {"popen": Popen, "path": str}
 
 
 def _rec_cmd(path, seconds=None, region=None):
@@ -306,41 +279,27 @@ def start_recording(name, path, seconds=None, region=None, display=1, show_click
     virtual desktop (or `region`) and always draws the cursor."""
     if audio:
         raise ValueError("audio recording is not supported on Windows")
-    rec = _RECORDERS.get(name)
-    if rec and rec["popen"].poll() is None:
-        raise ValueError(f"recording {name!r} already running -> {rec['path']}")
+    common.check_free(name)
     path = os.path.abspath(path)
     p = subprocess.Popen(_rec_cmd(path, seconds, region), stdin=subprocess.PIPE,
                          creationflags=subprocess.CREATE_NO_WINDOW)
-    _RECORDERS[name] = {"popen": p, "path": path}
+    common.RECORDERS[name] = {"popen": p, "path": path}
     return {"name": name, "path": path, "pid": p.pid, "seconds": seconds}
 
 
+def _finalize(p, timeout):
+    try:
+        p.communicate(b"q", timeout=timeout)  # "q" makes ffmpeg finalize the file
+    except subprocess.TimeoutExpired:
+        p.kill()
+
+
 def stop_recording(name, timeout=12):
-    rec = _RECORDERS.get(name)
-    if not rec:
-        raise ValueError(f"no recording named {name!r}")
-    p = rec["popen"]
-    if p.poll() is None:
-        try:
-            p.communicate(b"q", timeout=timeout)  # "q" makes ffmpeg finalize the file
-        except subprocess.TimeoutExpired:
-            p.kill()
-    _RECORDERS.pop(name, None)
-    path = rec["path"]
-    size = os.path.getsize(path) if os.path.exists(path) else 0
-    return {"name": name, "path": path, "bytes": size}
-
-
-def recording_status():
-    return {
-        n: {"path": r["path"], "running": r["popen"].poll() is None}
-        for n, r in _RECORDERS.items()
-    }
+    return common.finish_recording(name, _finalize, timeout)
 
 
 def stop_all_recordings():
-    for name in list(_RECORDERS):
+    for name in list(common.RECORDERS):
         try:
             stop_recording(name)
         except Exception:
@@ -556,11 +515,14 @@ def _set_foreground(hwnd):
             user32.AttachThreadInput(me, fg_tid, False)
 
 
-def _keep_focus(action):
+def _keep_focus(action, pid):
     """Run action(); if it pulls another window to the front, put the user's
     window back. Classic Win32 buttons and checkboxes get Invoke/Toggle as a
-    posted BM_CLICK, and the app activates itself in response."""
+    posted BM_CLICK, and the app activates itself in response. No guard when
+    app `pid` is already in front: nothing to protect."""
     before = user32.GetForegroundWindow()
+    if _pid_of(before) == pid:
+        return action(), False
     result = action()
     restored = False
     for _ in range(8):  # the activation arrives asynchronously
@@ -596,19 +558,40 @@ _ACTIONABLE = {
     "DocumentControl", "SliderControl", "SpinnerControl", "TabItemControl",
     "ListItemControl", "TreeItemControl", "DataItemControl", "HeaderItemControl",
 }
-# Action names exposed per element, and the AX names that map to them, so
-# macOS habits (perform_action(app, i, "AXPress")) keep working.
-_PATTERN_ACTIONS = [
-    (auto.PatternId.InvokePattern, ["Invoke"]),
-    (auto.PatternId.TogglePattern, ["Toggle"]),
-    (auto.PatternId.SelectionItemPattern, ["Select"]),
-    (auto.PatternId.ExpandCollapsePattern, ["Expand", "Collapse"]),
-    (auto.PatternId.LegacyIAccessiblePattern, ["DefaultAction"]),
-]
+# AX action names that map to UIA actions, so macOS habits
+# (perform_action(app, i, "AXPress")) keep working.
 _AX_ALIASES = {"axpress": "press", "axshowmenu": "Expand", "axconfirm": "Invoke",
                "axpick": "Select", "axraise": "Focus", "axcancel": "Collapse"}
 _MAX_VISITED = 4000  # UIA trees of browsers/IDEs can be huge; bound the walk
-_LIVE = {}  # pid -> list of uiautomation Controls, index-aligned with the last state
+_LIVE = {}  # pid -> raw IUIAutomationElements, index-aligned with the last state
+
+# Properties fetched with each node in one cross-process call (CacheRequest).
+_P = auto.PropertyId
+_CACHED = [
+    _P.ControlTypeProperty, _P.NameProperty, _P.BoundingRectangleProperty,
+    _P.IsOffscreenProperty, _P.AutomationIdProperty,
+    _P.IsValuePatternAvailableProperty, _P.ValueValueProperty, _P.ValueIsReadOnlyProperty,
+    _P.IsInvokePatternAvailableProperty, _P.IsTogglePatternAvailableProperty,
+    _P.IsSelectionItemPatternAvailableProperty, _P.IsExpandCollapsePatternAvailableProperty,
+    _P.IsLegacyIAccessiblePatternAvailableProperty, _P.LegacyIAccessibleDefaultActionProperty,
+]
+_AVAILABLE_ACTIONS = [
+    (_P.IsInvokePatternAvailableProperty, ["Invoke"]),
+    (_P.IsTogglePatternAvailableProperty, ["Toggle"]),
+    (_P.IsSelectionItemPatternAvailableProperty, ["Select"]),
+    (_P.IsExpandCollapsePatternAvailableProperty, ["Expand", "Collapse"]),
+]
+_CACHE_REQ = None
+
+
+def _cache_request():
+    global _CACHE_REQ
+    if _CACHE_REQ is None:
+        req = auto._AutomationClient.instance().IUIAutomation.CreateCacheRequest()
+        for pid in _CACHED:
+            req.AddProperty(pid)
+        _CACHE_REQ = req
+    return _CACHE_REQ
 
 
 def _safe(fn, default=""):
@@ -617,26 +600,6 @@ def _safe(fn, default=""):
         return default if v is None else v
     except Exception:
         return default
-
-
-def _actions(ctrl):
-    acts = []
-    for pid, names in _PATTERN_ACTIONS:
-        pat = _safe(lambda: ctrl.GetPattern(pid), None)
-        if pid == auto.PatternId.LegacyIAccessiblePattern:
-            if pat is None or not _safe(lambda: pat.DefaultAction):
-                continue  # only useful when it names a default action
-        if pat is not None:
-            acts += names
-    return acts
-
-
-def _value_info(ctrl):
-    """(value text, settable)"""
-    pat = _safe(lambda: ctrl.GetPattern(auto.PatternId.ValuePattern), None)
-    if pat is None:
-        return "", False
-    return str(_safe(lambda: pat.Value)), not _safe(lambda: pat.IsReadOnly, True)
 
 
 def get_app_state(identifier, max_elements=400, capture=True):
@@ -655,52 +618,52 @@ def get_app_state(identifier, max_elements=400, capture=True):
     win = {"window_id": int(hwnd), "owner": _proc_name(pid), "pid": pid, "title": _title(hwnd),
            "x": float(x), "y": float(y), "w": float(w), "h": float(h)}
 
-    elements, lines, live = [], [], []
+    elements, live = [], []
     visited = [0]
+    uia = auto._AutomationClient.instance().IUIAutomation
+    walker, req = uia.RawViewWalker, _cache_request()
 
-    def walk(ctrl, depth):
+    def walk(el, depth):
         if len(elements) >= max_elements or visited[0] >= _MAX_VISITED:
             return
         visited[0] += 1
-        role = _safe(lambda: ctrl.ControlTypeName)
-        label = str(_safe(lambda: ctrl.Name))
-        rect = _safe(lambda: ctrl.BoundingRectangle, None)
-        offscreen = _safe(lambda: ctrl.IsOffscreen, False)
-        has_box = rect is not None and rect.width() > 0 and rect.height() > 0 and not offscreen
+        get = el.GetCachedPropertyValue
+        role = auto.ControlTypeNames.get(_safe(lambda: get(_P.ControlTypeProperty), 0), "")
+        label = str(_safe(lambda: get(_P.NameProperty)))
+        rect = _safe(lambda: el.CachedBoundingRectangle, None)
+        rw = rect.right - rect.left if rect is not None else 0
+        rh = rect.bottom - rect.top if rect is not None else 0
+        has_box = rw > 0 and rh > 0 and not _safe(lambda: get(_P.IsOffscreenProperty), False)
 
         if has_box and (role in _ACTIONABLE or label):
-            value, settable = _value_info(ctrl)
-            actions = _actions(ctrl)
+            actions = [n for prop, names in _AVAILABLE_ACTIONS if _safe(lambda: get(prop), False)
+                       for n in names]
+            if _safe(lambda: get(_P.IsLegacyIAccessiblePatternAvailableProperty), False) \
+                    and _safe(lambda: get(_P.LegacyIAccessibleDefaultActionProperty)):
+                actions.append("DefaultAction")  # only useful when it names one
+            has_value = _safe(lambda: get(_P.IsValuePatternAvailableProperty), False)
+            value = str(_safe(lambda: get(_P.ValueValueProperty))) if has_value else ""
+            settable = bool(has_value) and not _safe(lambda: get(_P.ValueIsReadOnlyProperty), True)
             idx = len(elements)
-            cx, cy = rect.left + rect.width() / 2, rect.top + rect.height() / 2
+            cx, cy = rect.left + rw / 2, rect.top + rh / 2
             elements.append({
                 "index": idx, "role": role, "label": label[:120], "value": value[:160],
-                "x": float(rect.left), "y": float(rect.top),
-                "w": float(rect.width()), "h": float(rect.height()),
+                "x": float(rect.left), "y": float(rect.top), "w": float(rw), "h": float(rh),
                 "center": [round(cx, 1), round(cy, 1)],
                 "rel": [round(cx - x, 1), round(cy - y, 1)],
                 "actions": actions, "settable": settable,
-                "automation_id": str(_safe(lambda: ctrl.AutomationId)),
+                "automation_id": str(_safe(lambda: get(_P.AutomationIdProperty))),
+                "depth": depth,
             })
-            live.append(ctrl)
-            disp = f"[{idx}] {role}"
-            if label:
-                disp += f" “{label[:80]}”"
-            if value and value != label:
-                disp += f" = {value[:60]}"
-            if actions:
-                disp += "  • " + "/".join(actions).lower()
-            elif settable:
-                disp += "  • settable"
-            lines.append("  " * min(depth, 8) + disp)
+            live.append(el)
 
-        child = _safe(ctrl.GetFirstChildControl, None)
-        while child is not None and len(elements) < max_elements:
+        child = _safe(lambda: walker.GetFirstChildElementBuildCache(el, req), None)
+        while child and len(elements) < max_elements:
             walk(child, depth + 1)
-            child = _safe(child.GetNextSiblingControl, None)
+            child = _safe(lambda c=child: walker.GetNextSiblingElementBuildCache(c, req), None)
 
-    root = auto.ControlFromHandle(hwnd)
-    if root is not None:
+    root = _safe(lambda: uia.ElementFromHandleBuildCache(hwnd, req), None)
+    if root:
         walk(root, 0)
     _LIVE[pid] = live
 
@@ -708,7 +671,7 @@ def get_app_state(identifier, max_elements=400, capture=True):
     state = {
         "app": name[:-4] if name.lower().endswith(".exe") else name,
         "pid": pid, "window": win["title"], "window_bounds": win,
-        "elements": elements, "text": "\n".join(lines), "screenshot": None,
+        "elements": elements, "screenshot": None,
     }
     if capture:
         path = str(_screenshot_dir() / f"state-{int(time.time() * 1000)}.png")
@@ -733,7 +696,10 @@ def _live_control(pid, state_elements, element_index):
     live = _LIVE.get(pid) or []
     if element_index >= len(live):
         raise ValueError("element no longer cached; call get_app_state(app) again")
-    return live[element_index]
+    ctrl = auto.Control.CreateControlFromElement(live[element_index])
+    if ctrl is None:
+        raise ValueError("element is gone; call get_app_state(app) again")
+    return ctrl
 
 
 def _do(ctrl, action):
@@ -792,7 +758,7 @@ def click_element(pid, state_elements, element_index, button="left", count=1, me
     if method == "ax":
         ctrl = _live_control(pid, state_elements, element_index)
         if button == "left" and int(count) == 1:
-            via, restored = _keep_focus(lambda: _do(ctrl, "press"))
+            via, restored = _keep_focus(lambda: _do(ctrl, "press"), pid)
             if via:
                 return {**base, "via": via, "focus_restored": restored}
         hwnd = _safe(lambda: ctrl.NativeWindowHandle, 0) or 0
@@ -802,7 +768,7 @@ def click_element(pid, state_elements, element_index, button="left", count=1, me
             hwnd = _safe(lambda: node.NativeWindowHandle, 0) if node is not None else 0
         if not hwnd:
             raise RuntimeError("no UIA action and no window handle; use method='foreground'")
-        _, restored = _keep_focus(lambda: post_click_to_window(hwnd, cx, cy, button=button, count=count))
+        _, restored = _keep_focus(lambda: post_click_to_window(hwnd, cx, cy, button=button, count=count), pid)
         return {**base, "via": "PostMessage", "at": [cx, cy], "focus_restored": restored}
     click(cx, cy, button=button, count=count)
     return {**base, "via": "foreground", "at": [cx, cy]}
@@ -814,7 +780,7 @@ def set_element_value(pid, state_elements, element_index, value):
     p = _safe(lambda: ctrl.GetPattern(auto.PatternId.ValuePattern), None)
     if p is None:
         raise ValueError("element has no ValuePattern (not settable)")
-    ok, restored = _keep_focus(lambda: p.SetValue(value, waitTime=0))
+    ok, restored = _keep_focus(lambda: p.SetValue(value, waitTime=0), pid)
     if not ok:
         raise RuntimeError("ValuePattern.SetValue failed (read-only, or the app runs elevated?)")
     return {"set_value": element_index, "chars": len(value), "focus_restored": restored}
@@ -827,7 +793,7 @@ def perform_action(pid, state_elements, element_index, action):
     if _AX_ALIASES.get(action.lower(), action) == "Focus":
         via, restored = _do(ctrl, action), False  # moving focus is the point
     else:
-        via, restored = _keep_focus(lambda: _do(ctrl, action))
+        via, restored = _keep_focus(lambda: _do(ctrl, action), pid)
     if not via:
         raise RuntimeError(f"action {action!r} failed or is not supported by this element")
     return {"performed": via, "element_index": element_index, "focus_restored": restored}

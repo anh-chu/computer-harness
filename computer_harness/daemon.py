@@ -1,9 +1,9 @@
 """Computer-harness daemon.
 
 Holds the Accessibility + Screen Recording TCC grants (stable process identity),
-warms pyobjc once, and caches the last get_app_state() per app so element_index
-clicks resolve against a real snapshot. One request per connection, JSON in /
-JSON out.
+warms pyobjc once, and caches the last get_app_state() per app pid so
+element_index / label clicks resolve against a real snapshot. One request per
+connection, JSON in / JSON out.
 """
 import asyncio
 import json
@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 
-from . import ipc
+from . import admin, common, ipc
 
 if sys.platform == "win32":
     from . import engine_win as engine
@@ -20,7 +20,42 @@ else:
     from . import engine
 
 _START = time.time()
-_LAST_STATE = {}  # app identifier (lowercased) -> get_app_state() result
+_LAST_STATE = {}  # app pid -> full get_app_state() result
+_KEEP_FILES = int(os.environ.get("CH_KEEP_FILES", "500"))
+_KEEP_DAYS = float(os.environ.get("CH_KEEP_DAYS", "7"))
+
+
+def _prune():
+    """Captures may hold secrets: cap how many and how old (0 = no limit)."""
+    for d in (ipc.screenshot_dir(), ipc.recording_dir()):
+        common.prune(d, _KEEP_FILES, _KEEP_DAYS)
+
+
+def _cached(a):
+    """(pid, snapshot, element index) for a request naming app + element."""
+    pid = engine.app_pid(a.get("app", ""))
+    st = _LAST_STATE.get(pid)
+    if not st:
+        raise ValueError("no cached app state; call get_app_state(app) first")
+    idx = common.resolve_index(st["elements"], a.get("element_index"), a.get("label"), a.get("role"))
+    return pid, st, idx
+
+
+def _app_state(a):
+    st = engine.get_app_state(
+        a["app"], max_elements=a.get("max_elements", 400), capture=a.get("screenshot", True),
+    )
+    for e in st["elements"]:
+        e["kind"] = common.kind_of(e["role"])
+    st["text"] = common.render_text(st["elements"])
+    shot = st.get("screenshot")
+    if shot and a.get("annotate", True):
+        marked = shot["path"][:-4] + "-marked.png"
+        shot["annotated_path"] = common.annotate(shot["path"], st["elements"], marked)
+    previous = _LAST_STATE.get(st["pid"])
+    _LAST_STATE[st["pid"]] = st
+    _prune()
+    return common.shape_state(st, previous, a.get("interactive_only", False), a.get("diff", False))
 
 
 def _handle(req):
@@ -63,7 +98,8 @@ def _handle(req):
             path, region=a.get("region"), resize_logical=a.get("resize_logical", True)
         )
         if a.get("data_url"):
-            res["data_url"] = engine.screenshot_data_url(path)
+            res["data_url"] = common.screenshot_data_url(path)
+        _prune()
         return res
 
     if op == "record_start":
@@ -85,37 +121,38 @@ def _handle(req):
         path = a.get("path") or str(ipc.screenshot_dir() / f"window-{ts}.png")
         res = engine.capture_window(int(a["window_id"]), path)
         if res is None:
-            raise RuntimeError("window capture returned no image (window_id gone?)")
+            raise RuntimeError("window capture returned no image (window_id gone? minimized?)")
+        _prune()
         return res
 
     if op == "get_app_state":
-        st = engine.get_app_state(
-            a["app"], max_elements=a.get("max_elements", 400),
-            capture=a.get("screenshot", True),
-        )
-        _LAST_STATE[str(a["app"]).lower()] = st
-        return st
+        return _app_state(a)
+
+    if op == "find":
+        pid = engine.app_pid(a.get("app", ""))
+        st = _LAST_STATE.get(pid)
+        if not st:
+            raise ValueError("no cached app state; call get_app_state(app) first")
+        return {"elements": common.find_elements(st["elements"], a.get("label"), a.get("role"))}
 
     if op == "click":
-        if a.get("element_index") is not None:
-            key = str(a.get("app", "")).lower()
-            st = _LAST_STATE.get(key)
-            if not st:
-                raise ValueError("no cached app state; call get_app_state(app) first")
-            return engine.click_element(
-                st["pid"], st["elements"], int(a["element_index"]),
+        if a.get("element_index") is not None or a.get("label") is not None or a.get("role") is not None:
+            pid, st, idx = _cached(a)
+            res = engine.click_element(
+                pid, st["elements"], idx,
                 button=a.get("button", "left"), count=int(a.get("count", 1)),
                 method=a.get("method", "ax"),
             )
+            res.setdefault("focus_restored", False)
+            return res
         engine.click(a["x"], a["y"], button=a.get("button", "left"), count=int(a.get("count", 1)))
         return {"clicked": [a["x"], a["y"]], "via": "foreground"}
 
     if op == "set_value":
-        key = str(a.get("app", "")).lower()
-        st = _LAST_STATE.get(key)
-        if not st:
-            raise ValueError("no cached app state; call get_app_state(app) first")
-        return engine.set_element_value(st["pid"], st["elements"], int(a["element_index"]), a["value"])
+        pid, st, idx = _cached(a)
+        res = engine.set_element_value(pid, st["elements"], idx, a["value"])
+        res.setdefault("focus_restored", False)
+        return res
 
     if op == "move_mouse":
         engine.move_mouse(a["x"], a["y"])
@@ -134,11 +171,10 @@ def _handle(req):
         engine.press_key(a["key"])
         return {"pressed": a["key"]}
     if op == "perform_action":
-        key = str(a.get("app", "")).lower()
-        st = _LAST_STATE.get(key)
-        if not st:
-            raise ValueError("no cached app state; call get_app_state(app) first")
-        return engine.perform_action(st["pid"], st["elements"], int(a["element_index"]), a["action"])
+        pid, st, idx = _cached(a)
+        res = engine.perform_action(pid, st["elements"], idx, a["action"])
+        res.setdefault("focus_restored", False)
+        return res
 
     raise ValueError(f"unknown op {op!r}")
 
@@ -170,7 +206,12 @@ async def _client(reader, writer):
 
 
 async def _main(name):
+    other = admin.daemon_pid(name)
+    if other and other != os.getpid():
+        print(f"daemon {name!r} already running as pid {other}; exiting", file=sys.stderr)
+        return
     ipc.pid_path(name).write_text(str(os.getpid()))
+    _prune()
     await ipc.serve(name, _client)
 
 

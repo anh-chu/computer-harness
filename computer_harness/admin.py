@@ -11,10 +11,37 @@ def daemon_alive(name=None):
     return ipc.ping(name or ipc.NAME)
 
 
+def daemon_pid(name=None):
+    """PID of a running daemon for `name` (from its pid file), else None.
+    Checks the command line so a recycled PID is not mistaken for ours."""
+    try:
+        pid = int(ipc.pid_path(name or ipc.NAME).read_text().strip())
+        if ipc.WINDOWS:
+            import psutil
+            cmd = " ".join(psutil.Process(pid).cmdline())
+        else:
+            cmd = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "command="],
+                                 capture_output=True, text=True).stdout
+    except Exception:  # no pid file, process gone, or access denied
+        return None
+    return pid if "computer_harness.daemon" in cmd else None
+
+
 def ensure_daemon(name=None, wait=20.0):
     name = name or ipc.NAME
     if daemon_alive(name):
         return
+    # A daemon busy with a long request misses pings. Wait for it rather than
+    # start a second one that would take over its socket and drop its cache.
+    busy = daemon_pid(name)
+    if busy:
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if daemon_alive(name):
+                return
+            time.sleep(0.25)
+        raise RuntimeError(f"daemon {name} (pid {busy}) is running but not answering; "
+                           "computer-harness --restart to replace it")
     log = ipc.log_path(name)
     env = {**os.environ, "CH_NAME": name}
     if ipc.WINDOWS:
@@ -49,22 +76,12 @@ def restart_daemon(name=None):
             pass
     # hard cleanup if a stale pid lingers — but only SIGTERM a process we can
     # confirm is actually our daemon, so a recycled PID isn't signalled.
-    try:
-        pid = int(ipc.pid_path(name).read_text().strip())
-        if ipc.WINDOWS:
-            import psutil
-            proc = psutil.Process(pid)
-            if "computer_harness.daemon" in " ".join(proc.cmdline()):
-                proc.terminate()
-        else:
-            cmd = subprocess.run(
-                ["/bin/ps", "-p", str(pid), "-o", "command="],
-                capture_output=True, text=True,
-            ).stdout
-            if "computer_harness.daemon" in cmd:
-                os.kill(pid, 15)
-    except Exception:  # no pid file, process gone, or access denied
-        pass
+    pid = daemon_pid(name)
+    if pid:
+        try:
+            os.kill(pid, 15)  # TerminateProcess on Windows
+        except OSError:
+            pass
     ipc.cleanup(name)
     time.sleep(0.3)
 

@@ -9,7 +9,6 @@ point, exactly like a browser CSS pixel. That is what makes "read the pixel off
 the image, click_at_xy there" work without the agent ever thinking about Retina
 scale factors.
 """
-import base64
 import os
 import signal
 import subprocess
@@ -18,6 +17,10 @@ import time
 import Quartz
 from AppKit import NSWorkspace, NSRunningApplication, NSBitmapImageRep, NSPNGFileType
 import ApplicationServices as AX
+from CoreFoundation import CFGetTypeID
+
+from . import common
+from .common import norm_button as _norm_button, recording_status, screenshot_data_url  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Coordinate space
@@ -69,17 +72,6 @@ _DRAG = {
     "right": Quartz.kCGEventRightMouseDragged,
     "middle": Quartz.kCGEventOtherMouseDragged,
 }
-
-
-def _norm_button(b):
-    b = (b or "left").lower()
-    if b in ("l", "left"):
-        return "left"
-    if b in ("r", "right"):
-        return "right"
-    if b in ("m", "middle"):
-        return "middle"
-    return "left"
 
 
 def _post(ev):
@@ -145,20 +137,15 @@ _KEYCODES = {
     "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
 }
 _KEY_ALIASES = {
-    "enter": "return", "esc": "escape", "backspace": "delete",
-    "del": "forwarddelete", "pgup": "pageup", "pgdn": "pagedown",
-    "arrowleft": "left", "arrowright": "right", "arrowup": "up", "arrowdown": "down",
-    "spacebar": "space", "cmd": "command", "opt": "option", "ctrl": "control",
+    "cmd": "command", "opt": "option", "alt": "option", "win": "command",
     # X-keysym style names accepted for parity with sky
-    "control_l": "control", "control_r": "control", "shift_l": "shift",
-    "shift_r": "shift", "alt_l": "option", "alt_r": "option", "super_l": "command",
+    "alt_l": "option", "alt_r": "option", "super_l": "command",
     "super_r": "command", "meta_l": "command", "meta_r": "command",
 }
 _FLAGS = {
     "command": Quartz.kCGEventFlagMaskCommand,
     "shift": Quartz.kCGEventFlagMaskShift,
     "option": Quartz.kCGEventFlagMaskAlternate,
-    "alt": Quartz.kCGEventFlagMaskAlternate,
     "control": Quartz.kCGEventFlagMaskControl,
     "fn": Quartz.kCGEventFlagMaskSecondaryFn,
 }
@@ -176,18 +163,10 @@ def type_text(text, per_char_delay=0.0):
 
 def press_key(chord):
     """Press a `+`-separated chord, e.g. 'cmd+shift+t', 'Return', 'Control_L+a'."""
-    parts = [p.strip().lower() for p in str(chord).split("+") if p.strip()]
+    mods, key = common.parse_chord(chord, _FLAGS, _KEY_ALIASES)
     flags = 0
-    key = None
-    for p in parts:
-        p = _KEY_ALIASES.get(p, p)
-        if p in ("command", "shift", "option", "alt", "control", "fn"):
-            flags |= _FLAGS[p]
-        else:
-            key = p
-    if key is None:
-        raise ValueError(f"no non-modifier key in chord {chord!r}")
-    key = _KEY_ALIASES.get(key, key)
+    for m in mods:
+        flags |= _FLAGS[m]
     kc = _KEYCODES.get(key)
     if kc is None:
         raise ValueError(f"unknown key {key!r} in chord {chord!r}")
@@ -243,18 +222,10 @@ def capture_screenshot(path, region=None, resize_logical=True):
     return {"path": path, "width": target_w, "height": target_h, "scale": backing_scale()}
 
 
-def screenshot_data_url(path):
-    with open(path, "rb") as f:
-        return "data:image/png;base64," + base64.b64encode(f.read()).decode()
-
-
 # ---------------------------------------------------------------------------
 # Screen video recording (screencapture -v). Records the display passively —
 # no input, no focus change — so it never disturbs the user.
 # ---------------------------------------------------------------------------
-_RECORDERS = {}  # name -> {"popen": Popen, "path": str}
-
-
 def _rec_cmd(path, seconds=None, region=None, display=1, show_clicks=False, audio=False):
     path = os.path.abspath(path)
     cmd = ["/usr/sbin/screencapture", "-v", "-x", f"-D{int(display)}"]
@@ -272,43 +243,29 @@ def _rec_cmd(path, seconds=None, region=None, display=1, show_clicks=False, audi
 
 
 def start_recording(name, path, seconds=None, region=None, display=1, show_clicks=False, audio=False):
-    rec = _RECORDERS.get(name)
-    if rec and rec["popen"].poll() is None:
-        raise ValueError(f"recording {name!r} already running -> {rec['path']}")
+    common.check_free(name)
     path = os.path.abspath(path)
     p = subprocess.Popen(_rec_cmd(path, seconds, region, display, show_clicks, audio))
-    _RECORDERS[name] = {"popen": p, "path": path}
+    common.RECORDERS[name] = {"popen": p, "path": path}
     return {"name": name, "path": path, "pid": p.pid, "seconds": seconds}
 
 
+def _finalize(p, timeout):
+    p.send_signal(signal.SIGINT)  # finalizes the .mov
+    try:
+        p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.terminate()
+
+
 def stop_recording(name, timeout=12):
-    rec = _RECORDERS.get(name)
-    if not rec:
-        raise ValueError(f"no recording named {name!r}")
-    p = rec["popen"]
-    if p.poll() is None:
-        p.send_signal(signal.SIGINT)  # finalizes the .mov
-        try:
-            p.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            p.terminate()
-    _RECORDERS.pop(name, None)
-    path = rec["path"]
-    size = os.path.getsize(path) if os.path.exists(path) else 0
-    return {"name": name, "path": path, "bytes": size}
-
-
-def recording_status():
-    return {
-        n: {"path": r["path"], "running": r["popen"].poll() is None}
-        for n, r in _RECORDERS.items()
-    }
+    return common.finish_recording(name, _finalize, timeout)
 
 
 def stop_all_recordings():
     """Finalize any in-flight recordings — called on daemon shutdown so a
     `screencapture -v` child isn't orphaned and left recording."""
-    for name in list(_RECORDERS):
+    for name in list(common.RECORDERS):
         try:
             stop_recording(name)
         except Exception:
@@ -479,6 +436,44 @@ def _ax_size(el, attr):
     return None
 
 
+_AXVALUE_TYPE_ID = AX.AXValueGetTypeID()
+_WALK_ATTRS = [
+    AX.kAXRoleAttribute, AX.kAXTitleAttribute, AX.kAXDescriptionAttribute,
+    AX.kAXValueAttribute, "AXLabel", AX.kAXPositionAttribute, AX.kAXSizeAttribute,
+    AX.kAXChildrenAttribute, "AXIdentifier",
+]
+
+
+def _ax_many(el, attrs):
+    """Read several attributes in one IPC round trip. Missing attributes come
+    back as None. Falls back to one call per attribute if batching fails."""
+    try:
+        err, vals = AX.AXUIElementCopyMultipleAttributeValues(el, attrs, 0, None)
+    except Exception:
+        err, vals = -1, None
+    if err != 0 or vals is None or len(vals) != len(attrs):
+        return {a: _ax_copy(el, a) for a in attrs}
+    out = {}
+    for a, v in zip(attrs, vals):
+        if (v is not None and CFGetTypeID(v) == _AXVALUE_TYPE_ID
+                and AX.AXValueGetType(v) == AX.kAXValueAXErrorType):
+            v = None  # per-attribute error marker
+        out[a] = v
+    return out
+
+
+def _unpack(val, kind):
+    if val is None:
+        return None
+    ok, v = AX.AXValueGetValue(val, kind, None)
+    if not ok:
+        return None
+    return (v.x, v.y) if kind == AX.kAXValueCGPointType else (v.width, v.height)
+
+
+_LIVE = {}  # pid -> AXUIElements, index-aligned with the last get_app_state
+
+
 def _str(v):
     if v is None:
         return ""
@@ -516,18 +511,19 @@ def get_app_state(identifier, max_elements=400, capture=True):
     win_y = cg_win["y"] if cg_win else 0.0
 
     elements = []
-    lines = []
+    live = []
 
     def walk(el, depth):
         if len(elements) >= max_elements:
             return
-        role = _str(_ax_copy(el, AX.kAXRoleAttribute))
-        title = _str(_ax_copy(el, AX.kAXTitleAttribute))
-        desc = _str(_ax_copy(el, AX.kAXDescriptionAttribute))
-        value = _str(_ax_copy(el, AX.kAXValueAttribute))
-        label = title or desc or _str(_ax_copy(el, "AXLabel"))
-        pos = _ax_point(el, AX.kAXPositionAttribute)
-        size = _ax_size(el, AX.kAXSizeAttribute)
+        a = _ax_many(el, _WALK_ATTRS)
+        role = _str(a[AX.kAXRoleAttribute])
+        title = _str(a[AX.kAXTitleAttribute])
+        desc = _str(a[AX.kAXDescriptionAttribute])
+        value = _str(a[AX.kAXValueAttribute])
+        label = title or desc or _str(a["AXLabel"])
+        pos = _unpack(a[AX.kAXPositionAttribute], AX.kAXValueCGPointType)
+        size = _unpack(a[AX.kAXSizeAttribute], AX.kAXValueCGSizeType)
 
         emit = role in _ACTIONABLE or (label and pos and size)
         if emit and pos and size and size[0] > 0 and size[1] > 0:
@@ -544,24 +540,18 @@ def get_app_state(identifier, max_elements=400, capture=True):
                 "rel": [round(cx - win_x, 1), round(cy - win_y, 1)],
                 "actions": actions,
                 "settable": bool(_ax_settable(el, AX.kAXValueAttribute)),
+                "automation_id": _str(a["AXIdentifier"]),
+                "depth": depth,
             }
             elements.append(rec)
-            disp = f"[{idx}] {role}"
-            if label:
-                disp += f" “{label[:80]}”"
-            if value and value != label:
-                disp += f" = {value[:60]}"
-            if "AXPress" in actions:
-                disp += "  • pressable"
-            elif rec["settable"]:
-                disp += "  • settable"
-            lines.append("  " * min(depth, 8) + disp)
+            live.append(el)
 
-        for c in (_ax_copy(el, AX.kAXChildrenAttribute) or []):
+        for c in (a[AX.kAXChildrenAttribute] or []):
             walk(c, depth + 1)
 
     if root is not None:
         walk(root, 0)
+    _LIVE[pid] = live
 
     state = {
         "app": str(app.localizedName() or ""),
@@ -569,7 +559,6 @@ def get_app_state(identifier, max_elements=400, capture=True):
         "window": win_title,
         "window_bounds": cg_win,
         "elements": elements,
-        "text": "\n".join(lines),
         "screenshot": None,
     }
     if capture and cg_win:
@@ -618,6 +607,17 @@ def _locate_element(pid, rec):
     return match["el"]
 
 
+def _element(pid, rec):
+    """The cached live element for a record, else search the tree for it."""
+    live = _LIVE.get(pid) or []
+    i = rec["index"]
+    if i < len(live):
+        pos = _ax_point(live[i], AX.kAXPositionAttribute)
+        if pos is not None:  # still alive
+            return live[i]
+    return _locate_element(pid, rec)
+
+
 def _rec_for_index(state_elements, element_index):
     for e in state_elements:
         if e["index"] == element_index:
@@ -636,7 +636,7 @@ def click_element(pid, state_elements, element_index, button="left", count=1, me
     """
     rec = _rec_for_index(state_elements, element_index)
     if method == "ax" and "AXPress" in rec.get("actions", []):
-        el = _locate_element(pid, rec)
+        el = _element(pid, rec)
         if el is not None:
             err = AX.AXUIElementPerformAction(el, "AXPress")
             if err == 0:
@@ -655,7 +655,7 @@ def click_element(pid, state_elements, element_index, button="left", count=1, me
 def set_element_value(pid, state_elements, element_index, value):
     """Set a text element's value directly via AX. Non-disturbing; no keystrokes."""
     rec = _rec_for_index(state_elements, element_index)
-    el = _locate_element(pid, rec)
+    el = _element(pid, rec)
     if el is None:
         raise ValueError("could not relocate element to set value")
     err = AX.AXUIElementSetAttributeValue(el, AX.kAXValueAttribute, value)
@@ -667,7 +667,7 @@ def set_element_value(pid, state_elements, element_index, value):
 def perform_action(pid, state_elements, element_index, action):
     """Invoke an arbitrary AX action (e.g. AXPress, AXShowMenu) on an element."""
     rec = _rec_for_index(state_elements, element_index)
-    el = _locate_element(pid, rec)
+    el = _element(pid, rec)
     if el is None:
         raise ValueError("could not relocate element for action")
     err = AX.AXUIElementPerformAction(el, action)
