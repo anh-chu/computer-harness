@@ -76,6 +76,31 @@ background actions detect that and give focus back to your window within
 only classic Win32 controls; apps running as admin need an elevated daemon; a
 locked screen or UAC prompt blocks everything. See [install.md](install.md#windows).
 
+## MCP server
+
+`computer-harness mcp` serves the helpers as MCP tools, so an agent on another
+machine can drive this one. Install with the extra: `uv tool install
+"computer-harness[mcp] @ git+https://github.com/anh-chu/computer-harness"`.
+
+```bash
+computer-harness mcp                                          # stdio, local client
+computer-harness mcp --http --host 192.168.1.20 --self-signed # HTTPS on the LAN
+computer-harness mcp --http --host 192.168.1.20 --self-signed --allow-foreground
+```
+
+- Clients get the listed tools only, never arbitrary Python.
+- Every HTTP request needs `Authorization: Bearer <token>` (`CH_MCP_TOKEN`, or
+  `~/.computer-harness/mcp-token`, created owner-only on first run).
+- A LAN address needs TLS: `--self-signed` makes a certificate for this host's
+  names and IPs and prints its SHA-256 fingerprint; or pass `--cert`/`--key`.
+- The `Host` header must be one of this machine's names or IPs, or an
+  `--allowed-host`.
+- Foreground tools (real cursor and keyboard) appear only with
+  `--allow-foreground`.
+- Snapshots and captures come back as images, not file paths.
+
+See [install.md](install.md#mcp-server) for client setup.
+
 ## Security model — read before use
 
 computer-harness is a "run code as me" tool, like a shell. Specifically:

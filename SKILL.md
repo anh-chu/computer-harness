@@ -202,6 +202,13 @@ computer-harness --help
   because `CGWindowListCreateImage` only has backing-store pixels for the current
   Space. Move the window to the active Space, or drive it AX-only (blind).
 
+## MCP server
+
+`computer-harness mcp` exposes these helpers as MCP tools (stdio, or HTTPS on
+the LAN with a bearer token). See install.md. Over MCP there is no heredoc:
+call the tools directly. `get_app_state` returns the tree text plus the
+annotated window image.
+
 ## Windows
 
 Same helpers, same heredoc. What differs:

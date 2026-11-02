@@ -123,3 +123,43 @@ random token that every client must send first.
 `tests/smoke_windows.py` drives a test window end to end and checks that the
 cursor and focus do not move. CI runs it on `windows-2022` and `windows-2025`,
 `tests/smoke_macos.py` on `macos-latest`, and `tests/test_common.py` everywhere.
+
+## MCP server
+
+Install the extra (Python 3.10+): `uv tool install "computer-harness[mcp] @ git+https://github.com/anh-chu/computer-harness"`,
+or `pip install -e ".[mcp]"` in a clone.
+
+On the machine to control, from its signed-in desktop session:
+
+```bash
+computer-harness mcp --http --host <its LAN IP> --self-signed [--allow-foreground]
+```
+
+It prints the URL, the token file, the certificate path and its SHA-256
+fingerprint. The server refuses a LAN address without TLS.
+
+On the client machine:
+
+1. Copy `~/.computer-harness/mcp-tls/cert.pem` from the server and check its
+   fingerprint: `openssl x509 -in cert.pem -noout -fingerprint -sha256`.
+2. Trust it for the client. Node-based clients (Claude Code):
+   `export NODE_EXTRA_CA_CERTS=/path/to/cert.pem`. Python (httpx):
+   `verify=ssl.create_default_context(cafile="cert.pem")`.
+3. Add the server with the token from the server's `~/.computer-harness/mcp-token`:
+
+```bash
+claude mcp add --transport http computer-harness https://<host>:8765/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+Use the address the certificate covers: the bound IP, the hostname, or
+`<hostname>.local`. Add more names with `--allowed-host` (they also go into a
+regenerated certificate).
+
+Keep the server in the user's login session, not a system service: macOS
+permissions and Windows UI Automation both need the desktop session. Start
+it at login with a LaunchAgent (macOS) or a Task Scheduler "At log on" task
+(Windows). Rotate the token by deleting `mcp-token` and restarting.
+
+CI runs `tests/smoke_mcp.py` on macOS and Windows: it binds the runner's LAN IP
+over HTTPS and drives TextEdit / a WinForms window through the MCP client.
