@@ -206,10 +206,12 @@ async def _client(reader, writer):
 
 
 async def _main(name):
+    """Serve until shutdown. Returns False, touching nothing, when another live
+    daemon already owns `name`."""
     other = admin.daemon_pid(name)
     if other and other != os.getpid():
         print(f"daemon {name!r} already running as pid {other}; exiting", file=sys.stderr)
-        return
+        return False
     ipc.pid_path(name).write_text(str(os.getpid()))
     _prune()
     await ipc.serve(name, _client)
@@ -220,11 +222,13 @@ def run(name=None):
     # Owner-only for everything this process (and its screencapture children)
     # creates: captures may contain on-screen secrets. Dirs are 0700 via ipc.
     os.umask(0o077)
+    owner = True
     try:
-        asyncio.run(_main(name))
+        owner = asyncio.run(_main(name)) is not False
     finally:
-        engine.stop_all_recordings()
-        ipc.cleanup(name)
+        if owner:  # never remove the files of the daemon that refused us
+            engine.stop_all_recordings()
+            ipc.cleanup(name)
 
 
 if __name__ == "__main__":
