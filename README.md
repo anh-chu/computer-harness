@@ -70,7 +70,9 @@ The same helpers run on Windows 10/11 through `engine_win.py`:
 - **Daemon channel:** 127.0.0.1 on a random port plus a per-run token, because
   asyncio has no AF_UNIX server on Windows.
 
-Limits: no capture of minimized windows; the background click fallback reaches
+Some Win32 apps raise their own window when a button is pressed through UIA;
+background actions detect that and give focus back to your window within
+~150 ms. Limits: no capture of minimized windows; the background click fallback reaches
 only classic Win32 controls; apps running as admin need an elevated daemon; a
 locked screen or UAC prompt blocks everything. See [install.md](install.md#windows).
 

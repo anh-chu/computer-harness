@@ -210,6 +210,10 @@ Same helpers, same heredoc. What differs:
   still 1:1 with click coordinates.
 - **`cmd` in a chord means `ctrl`** (`press_key("cmd+c")` sends Ctrl+C). Use
   `win` for the Windows key.
+- **Focus guard.** Some apps (classic Win32 buttons, checkboxes) bring
+  themselves to the front when pressed through UIA. Background actions put the
+  user's window back within ~150 ms and report `focus_restored: True`. Keys the
+  user types in that moment can land in the target app.
 - **Background click fallback is weak.** Without a UIA action, `click` posts
   window messages, which only classic Win32 controls honour. Chromium, Electron
   and UWP content need `method="foreground"`.

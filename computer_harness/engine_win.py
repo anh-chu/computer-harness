@@ -542,13 +542,7 @@ def app_pid(identifier):
     return r[0] if r else None
 
 
-def activate_app(identifier):
-    r = _resolve_window(identifier)
-    if not r:
-        raise ValueError(f"app not found: {identifier!r}")
-    pid, hwnd = r
-    if user32.IsIconic(hwnd):
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+def _set_foreground(hwnd):
     # Windows only lets the foreground thread hand over focus, so borrow its
     # input state for the call.
     fg_tid = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
@@ -560,6 +554,33 @@ def activate_app(identifier):
     finally:
         if attached:
             user32.AttachThreadInput(me, fg_tid, False)
+
+
+def _keep_focus(action):
+    """Run action(); if it pulls another window to the front, put the user's
+    window back. Classic Win32 buttons and checkboxes get Invoke/Toggle as a
+    posted BM_CLICK, and the app activates itself in response."""
+    before = user32.GetForegroundWindow()
+    result = action()
+    restored = False
+    for _ in range(8):  # the activation arrives asynchronously
+        time.sleep(0.02)
+        now = user32.GetForegroundWindow()
+        if before and now and now != before:
+            _set_foreground(before)
+            restored = True
+            break
+    return result, restored
+
+
+def activate_app(identifier):
+    r = _resolve_window(identifier)
+    if not r:
+        raise ValueError(f"app not found: {identifier!r}")
+    pid, hwnd = r
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    _set_foreground(hwnd)
     time.sleep(0.3)
     name = _proc_name(pid)
     return {"name": name[:-4] if name.lower().endswith(".exe") else name, "pid": pid,
@@ -771,9 +792,9 @@ def click_element(pid, state_elements, element_index, button="left", count=1, me
     if method == "ax":
         ctrl = _live_control(pid, state_elements, element_index)
         if button == "left" and int(count) == 1:
-            via = _do(ctrl, "press")
+            via, restored = _keep_focus(lambda: _do(ctrl, "press"))
             if via:
-                return {**base, "via": via}
+                return {**base, "via": via, "focus_restored": restored}
         hwnd = _safe(lambda: ctrl.NativeWindowHandle, 0) or 0
         node = ctrl
         while not hwnd and node is not None:
@@ -781,8 +802,8 @@ def click_element(pid, state_elements, element_index, button="left", count=1, me
             hwnd = _safe(lambda: node.NativeWindowHandle, 0) if node is not None else 0
         if not hwnd:
             raise RuntimeError("no UIA action and no window handle; use method='foreground'")
-        post_click_to_window(hwnd, cx, cy, button=button, count=count)
-        return {**base, "via": "PostMessage", "at": [cx, cy]}
+        _, restored = _keep_focus(lambda: post_click_to_window(hwnd, cx, cy, button=button, count=count))
+        return {**base, "via": "PostMessage", "at": [cx, cy], "focus_restored": restored}
     click(cx, cy, button=button, count=count)
     return {**base, "via": "foreground", "at": [cx, cy]}
 
@@ -793,19 +814,23 @@ def set_element_value(pid, state_elements, element_index, value):
     p = _safe(lambda: ctrl.GetPattern(auto.PatternId.ValuePattern), None)
     if p is None:
         raise ValueError("element has no ValuePattern (not settable)")
-    if not p.SetValue(value, waitTime=0):
+    ok, restored = _keep_focus(lambda: p.SetValue(value, waitTime=0))
+    if not ok:
         raise RuntimeError("ValuePattern.SetValue failed (read-only, or the app runs elevated?)")
-    return {"set_value": element_index, "chars": len(value)}
+    return {"set_value": element_index, "chars": len(value), "focus_restored": restored}
 
 
 def perform_action(pid, state_elements, element_index, action):
     """Run a named UIA action (Invoke, Toggle, Select, Expand, Collapse,
     DefaultAction, Focus) or an AX alias (AXPress, AXShowMenu)."""
     ctrl = _live_control(pid, state_elements, element_index)
-    via = _do(ctrl, action)
+    if _AX_ALIASES.get(action.lower(), action) == "Focus":
+        via, restored = _do(ctrl, action), False  # moving focus is the point
+    else:
+        via, restored = _keep_focus(lambda: _do(ctrl, action))
     if not via:
         raise RuntimeError(f"action {action!r} failed or is not supported by this element")
-    return {"performed": via, "element_index": element_index}
+    return {"performed": via, "element_index": element_index, "focus_restored": restored}
 
 
 _WM = {"left": (0x0201, 0x0202, 0x0001), "right": (0x0204, 0x0205, 0x0002),
