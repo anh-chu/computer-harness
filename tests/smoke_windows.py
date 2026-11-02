@@ -86,16 +86,19 @@ def main():
         cur_before = cursor()
         check("notepad in front", fg_before["name"].lower() == "notepad", fg_before)
 
+        def focus_kept(step):
+            fg = frontmost_app()
+            check(f"focus kept after {step}", fg["pid"] == fg_before["pid"], fg)
+
         # --- background (non-disturbing) tier ---
+        time.sleep(1)
+        focus_kept("settle")
         st = get_app_state(TITLE)
+        focus_kept("get_app_state")
         check("get_app_state tree", len(st["elements"]) >= 3, f"{len(st['elements'])} elements")
         shot = st["screenshot"]
         check("background window capture", shot and os.path.getsize(shot["path"]) > 0
               and not_blank(shot["path"]), shot)
-
-        def focus_kept(step):
-            fg = frontmost_app()
-            check(f"focus kept after {step}", fg["pid"] == fg_before["pid"], fg)
 
         btn = find(st, "ButtonControl", "Press me")
         r = click(TITLE, btn["index"])

@@ -42,6 +42,8 @@ user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.IsWindow.argtypes = [wintypes.HWND]
 user32.GetForegroundWindow.restype = wintypes.HWND
 user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.BringWindowToTop.argtypes = [wintypes.HWND]
+user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.GetDC.argtypes = [wintypes.HWND]
 user32.GetDC.restype = wintypes.HDC
@@ -547,10 +549,17 @@ def activate_app(identifier):
     pid, hwnd = r
     if user32.IsIconic(hwnd):
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-    # Windows only lets the process that got the last input take focus; a
-    # synthetic Alt tap gives us that right.
-    _send(_key(vk=0x12), _key(vk=0x12, flags=_KEYEVENTF_KEYUP))
-    user32.SetForegroundWindow(hwnd)
+    # Windows only lets the foreground thread hand over focus, so borrow its
+    # input state for the call.
+    fg_tid = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+    me = ctypes.windll.kernel32.GetCurrentThreadId()
+    attached = fg_tid and fg_tid != me and user32.AttachThreadInput(me, fg_tid, True)
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(me, fg_tid, False)
     time.sleep(0.3)
     name = _proc_name(pid)
     return {"name": name[:-4] if name.lower().endswith(".exe") else name, "pid": pid,
