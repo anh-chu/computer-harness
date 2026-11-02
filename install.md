@@ -5,6 +5,12 @@ Automation, SendInput, PrintWindow). Windows steps are in the last section.
 
 ## 1. Runtime
 
+Quickest: `uv tool install git+https://github.com/anh-chu/computer-harness`
+puts `computer-harness` on `$PATH` (macOS or Windows). Grant the permissions in
+step 2 to the Python that `--doctor` prints.
+
+From a clone instead:
+
 Already installed in this environment at `~/tools/computer-harness/` with a
 dedicated venv (`~/tools/computer-harness/.venv`) and a `computer-harness`
 symlink on `$PATH` (`~/.local/bin/computer-harness`).
@@ -54,7 +60,9 @@ PY
 ```
 ~/tools/computer-harness/
   computer_harness/
-    engine.py     pyobjc: CGEvent input, screencapture/CGWindowList pixels, AXUIElement tree
+    engine.py     macOS (pyobjc): CGEvent input, screencapture/CGWindowList pixels, AXUIElement tree
+    engine_win.py Windows: SendInput, PrintWindow/ImageGrab pixels, UI Automation tree
+    common.py     shared: chords, element kinds, label lookup, annotation, retention
     daemon.py     AF_UNIX JSON server; holds TCC grants, caches last app state
     ipc.py        socket framing + paths
     admin.py      daemon lifecycle + doctor
@@ -75,13 +83,16 @@ PY
 
 ⚠ **Privacy:** screenshots and recordings capture whatever is on screen and may
 contain passwords, tokens, or private messages. They are stored **unencrypted**
-in `~/.computer-harness/` (dirs `0700`, files `0600` — owner-only) and are **not
-pruned automatically**. Delete the directory to purge, or uninstall (below).
+in `~/.computer-harness/` (dirs `0700`, files `0600` — owner-only). The daemon
+keeps the newest 500 files per folder and deletes files older than 7 days; set
+`CH_KEEP_FILES` / `CH_KEEP_DAYS` before it starts to change that (`0` = no
+limit). Delete the directory to purge, or uninstall (below).
 
 ## Multiple instances
 
 Set `CH_NAME=work` to run an isolated daemon (own socket/log). Default name is
-`default`.
+`default`. Only one daemon runs per name: a second one exits at once, and a
+busy daemon is waited for rather than replaced.
 
 ## Uninstall
 
@@ -110,4 +121,5 @@ listens on a random 127.0.0.1 port; `ch-<name>.port` holds the port and a
 random token that every client must send first.
 
 `tests/smoke_windows.py` drives a test window end to end and checks that the
-cursor and focus do not move. CI runs it on `windows-2022` and `windows-2025`.
+cursor and focus do not move. CI runs it on `windows-2022` and `windows-2025`,
+`tests/smoke_macos.py` on `macos-latest`, and `tests/test_common.py` everywhere.

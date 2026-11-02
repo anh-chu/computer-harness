@@ -1,7 +1,7 @@
 # computer-harness
 
-Direct native-macOS control via CoreGraphics (input), CGWindowList (pixels), and
-the Accessibility API (structure). The desktop sibling of `browser-harness`:
+Direct native-app control on macOS (CoreGraphics input, CGWindowList pixels,
+Accessibility API structure) and Windows (SendInput, PrintWindow, UI Automation). The desktop sibling of `browser-harness`:
 same daemon + heredoc shape, but it drives **any native app**, not just Chrome.
 Reverse-engineered from the architecture of Codex's computer use (`@oai/sky`) —
 same interaction model (per-window screenshot + indexed accessibility tree +
@@ -82,10 +82,13 @@ accessibility API. The user's foreground app and cursor are never touched.
 
 | Verb | What it does |
 |---|---|
-| `get_app_state(app)` | Background window screenshot + indexed, actionable a11y tree. Read `text`, pick an `element_index`. Caches the snapshot. |
-| `click(app, element_index)` | `AXPress` the element in the background. `method="foreground"` to force a real click instead. |
-| `set_value(app, element_index, value)` | Set a text field/area's value directly — no keystrokes. Works on background windows. |
-| `perform_action(app, element_index, action)` | Any AX action: `AXPress`, `AXShowMenu`, `AXIncrement`, `AXConfirm`, … |
+| `get_app_state(app)` | Background window screenshot + indexed, actionable a11y tree. Read `text`, pick an element. Caches the snapshot. `screenshot["annotated_path"]` has every element's box and index drawn on it. `interactive_only=True` drops elements you cannot act on; `diff=True` adds what changed since the last snapshot. |
+| `find(app, label=, role=)` | Elements in the last snapshot by label (exact first, then substring) and role. |
+| `click(app, element_index)` or `click(app, label="Save")` | Press the element in the background. Add `role="button"` if the label is ambiguous. `method="foreground"` to force a real click instead. |
+| `set_value(app, element_index or label=, value=)` | Set a text field/area's value directly — no keystrokes. Works on background windows. |
+| `perform_action(app, element_index or label=, action=)` | Any AX action: `AXPress`, `AXShowMenu`, `AXIncrement`, `AXConfirm`, … |
+| `wait_for(app, label=, role=, timeout=10)` | Re-snapshot until the element appears; returns it. Use instead of `sleep()`. |
+| `wait_window(title, timeout=10)` | Wait for a window whose title contains `title`. |
 | `capture_window(app=… or window_id=…)` | Background capture of a single window. |
 | `list_windows(app=None)` | On-screen windows with id, owner, pid, bounds. |
 
@@ -114,6 +117,11 @@ Note: `capture_screenshot`, `record_screen`, and `start/stop_recording` are
 *passive* — full-screen but no input and no focus change, so they don't disturb
 the user. They live here only because they use the global display, not a target
 window. The *input* verbs below `activate_app` are the disruptive ones.
+
+Every element has `kind`, the same on macOS and Windows (`button`, `text`,
+`checkbox`, `radio`, `link`, `menuitem`, `tab`, `listitem`, …), next to the
+native `role` (`AXButton`, `ButtonControl`). Use `kind` in `role=` filters so the
+same code runs on both. The `text` tree shows kinds.
 
 ## Coordinates
 
@@ -201,8 +209,9 @@ Same helpers, same heredoc. What differs:
 - **Apps are found by exe name or window title**: `get_app_state("notepad")`,
   `get_app_state("Calculator")` (UWP apps live in ApplicationFrameHost, so use
   the title). `bundle_id` in `list_apps()` is the exe path.
-- **Roles are UI Automation names**: `ButtonControl`, `EditControl`,
-  `CheckBoxControl`, `MenuItemControl`, … Each element lists its `actions`:
+- **Native roles are UI Automation names**: `ButtonControl`, `EditControl`,
+  `CheckBoxControl`, `MenuItemControl`, … (`kind` is the same as on macOS).
+  Each element lists its `actions`:
   `Invoke`, `Toggle`, `Select`, `Expand`/`Collapse`, `DefaultAction`.
   `click(app, i)` tries them in that order; `perform_action` accepts these names
   and the AX aliases `AXPress` and `AXShowMenu`.
@@ -212,7 +221,8 @@ Same helpers, same heredoc. What differs:
   `win` for the Windows key.
 - **Focus guard.** Some apps (classic Win32 buttons, checkboxes) bring
   themselves to the front when pressed through UIA. Background actions put the
-  user's window back within ~150 ms and report `focus_restored: True`. Keys the
+  user's window back within ~150 ms and report `focus_restored: True`. No
+  guard (and no delay) when the target app is already in front. Keys the
   user types in that moment can land in the target app.
 - **Background click fallback is weak.** Without a UIA action, `click` posts
   window messages, which only classic Win32 controls honour. Chromium, Electron

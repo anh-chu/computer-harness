@@ -149,7 +149,9 @@ def test_ipc_round_trip(tmp_path, monkeypatch):
 
     loop = asyncio.new_event_loop()
     server = loop.create_task(ipc.serve(name, handler))
-    threading.Thread(target=loop.run_forever, daemon=True).start()
+    t = threading.Thread(target=lambda: loop.run_until_complete(
+        asyncio.gather(server, return_exceptions=True)), daemon=True)
+    t.start()
     try:
         deadline = time.time() + 5
         while not ipc.ping(name) and time.time() < deadline:
@@ -158,5 +160,6 @@ def test_ipc_round_trip(tmp_path, monkeypatch):
         assert ipc.call({"op": "x", "args": {"n": "ü"}}, name=name) == {"echo": {"op": "x", "args": {"n": "ü"}}}
     finally:
         loop.call_soon_threadsafe(server.cancel)
-        loop.call_soon_threadsafe(loop.stop)
+        t.join(5)
+        loop.close()
         ipc.cleanup(name)

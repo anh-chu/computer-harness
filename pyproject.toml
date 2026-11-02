@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "computer-harness"
-version = "0.1.0"
+version = "0.2.0"
 description = "The simplest, thinnest harness to control native macOS and Windows apps with your agent. Sibling to browser-harness."
 requires-python = ">=3.9"
 dependencies = [

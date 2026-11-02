@@ -46,11 +46,11 @@ macOS (CoreGraphics, CGWindowList, Accessibility API) or Windows 10/11 (see
 below).
 
 ```bash
-git clone https://github.com/huytieu/computer-harness && cd computer-harness
-python3 -m venv .venv && .venv/bin/pip install -e .
-ln -sf "$PWD/.venv/bin/computer-harness" ~/.local/bin/computer-harness
+uv tool install git+https://github.com/anh-chu/computer-harness
 computer-harness --doctor
 ```
+
+Or from a clone: `python3 -m venv .venv && .venv/bin/pip install -e .`
 
 Grant the printed Python binary **Accessibility** and **Screen Recording** in
 System Settings → Privacy & Security (once). `--doctor` tells you what's missing.
@@ -90,14 +90,16 @@ computer-harness is a "run code as me" tool, like a shell. Specifically:
   authority and stop it (`--restart` kills it) when unused.
 - **Screen captures may contain secrets.** Screenshots and recordings land
   unencrypted in `~/.computer-harness/` (dirs `0700`, files `0600` — owner-only).
-  Nothing prunes them automatically; delete the directory to purge. Uninstalling
-  removes it.
+  The daemon keeps the newest 500 files of each kind and deletes anything older
+  than 7 days (`CH_KEEP_FILES`, `CH_KEEP_DAYS`; `0` turns a limit off). Delete
+  the directory to purge.
 - **No network egress.** The tool makes no outbound connections and sends no
   telemetry; the only socket is the local `AF_UNIX` control channel.
 
 ## Status
 
-v0.1.0. macOS and Windows. Verified end-to-end: background window capture, AX-action
+v0.2.0. macOS and Windows. CI runs unit tests on Linux, macOS and Windows,
+and end-to-end tests on macOS (TextEdit) and Windows Server 2022/2025 (WinForms). Verified end-to-end: background window capture, AX-action
 clicks, direct text set-value, full-screen foreground input, and desktop video
 recording — all through the CLI/daemon. Not affiliated with OpenAI.
 
