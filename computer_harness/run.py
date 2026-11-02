@@ -29,6 +29,8 @@ Commands:
   computer-harness --doctor      diagnose install, daemon, and TCC permissions
   computer-harness --status      daemon + permission status as JSON
   computer-harness --restart     stop the daemon (next call starts fresh)
+  computer-harness mcp [--http --host <ip> --self-signed] [--allow-foreground]
+                                 serve the helpers as MCP tools (needs the [mcp] extra)
   computer-harness --help
 """
 
@@ -43,6 +45,10 @@ def main():
     if args and args[0] in {"--status", "status"}:
         import json
         print(json.dumps(status(), indent=2))
+        return
+    if args and args[0] in {"mcp", "--mcp"}:
+        from .mcp_server import main as mcp_main
+        mcp_main(args[1:])
         return
     if args and args[0] in {"--restart", "--reload"}:
         restart_daemon()

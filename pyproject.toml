@@ -16,6 +16,9 @@ dependencies = [
     "pillow>=10.0",
 ]
 
+[project.optional-dependencies]
+mcp = ["mcp>=2.3,<3; python_version >= '3.10'"]
+
 [project.scripts]
 computer-harness = "computer_harness.run:main"
 
