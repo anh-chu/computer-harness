@@ -1,6 +1,7 @@
 # Installing computer-harness
 
-macOS only (uses CoreGraphics, CGWindowList, and the Accessibility API).
+macOS (CoreGraphics, CGWindowList, Accessibility API) or Windows 10/11 (UI
+Automation, SendInput, PrintWindow). Windows steps are in the last section.
 
 ## 1. Runtime
 
@@ -90,3 +91,23 @@ rm ~/.local/bin/computer-harness
 rm -rf ~/tools/computer-harness/.venv ~/.computer-harness
 # then remove the grants in System Settings if desired
 ```
+
+## Windows
+
+```powershell
+git clone https://github.com/anh-chu/computer-harness; cd computer-harness
+py -m venv .venv; .venv\Scripts\pip install -e .   # uiautomation, psutil, pillow
+winget install Gyan.FFmpeg                           # optional, for recording
+.venv\Scripts\computer-harness --doctor
+```
+
+No permission grants. `--doctor` checks that the desktop is unlocked and
+interactive, whether the daemon is elevated (needed to drive apps that run as
+admin), and whether ffmpeg is present.
+
+Runtime files all live in `%USERPROFILE%\.computer-harness\`. The daemon
+listens on a random 127.0.0.1 port; `ch-<name>.port` holds the port and a
+random token that every client must send first.
+
+`tests/smoke_windows.py` drives a test window end to end and checks that the
+cursor and focus do not move. CI runs it on `windows-2022` and `windows-2025`.

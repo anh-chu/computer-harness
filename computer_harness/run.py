@@ -4,7 +4,7 @@ from .admin import daemon_alive, ensure_daemon, restart_daemon, run_doctor, stat
 from .helpers import *  # noqa: F401,F403 — pre-imported into the heredoc namespace
 from . import ipc
 
-HELP = """Computer Harness — native macOS computer use
+HELP = """Computer Harness — native macOS and Windows computer use
 
 Read SKILL.md for the workflow. Helpers are pre-imported; the daemon auto-starts.
 

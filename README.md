@@ -1,6 +1,6 @@
 # computer-harness
 
-The simplest, thinnest harness to control **native macOS apps** with your agent —
+The simplest, thinnest harness to control **native macOS and Windows apps** with your agent —
 and, by default, **without disturbing you**. A desktop sibling to browser-harness:
 same daemon + heredoc shape, but it drives any native app, not just Chrome.
 
@@ -42,7 +42,8 @@ entitlements, no dependency on OpenAI's binary:
 
 ## Install
 
-macOS only (CoreGraphics, CGWindowList, Accessibility API).
+macOS (CoreGraphics, CGWindowList, Accessibility API) or Windows 10/11 (see
+below).
 
 ```bash
 git clone https://github.com/huytieu/computer-harness && cd computer-harness
@@ -55,6 +56,23 @@ Grant the printed Python binary **Accessibility** and **Screen Recording** in
 System Settings → Privacy & Security (once). `--doctor` tells you what's missing.
 See [install.md](install.md) for details, [SKILL.md](SKILL.md) for the full
 workflow.
+
+## Windows
+
+The same helpers run on Windows 10/11 through `engine_win.py`:
+
+- **Structure and background actions:** UI Automation (Invoke, Toggle, Select,
+  ExpandCollapse, ValuePattern.SetValue), so `click` and `set_value` stay
+  non-disturbing.
+- **Pixels:** `PrintWindow(PW_RENDERFULLCONTENT)` for a covered window, Pillow
+  `ImageGrab` for the screen, ffmpeg `gdigrab` for video.
+- **Foreground input:** `SendInput`.
+- **Daemon channel:** 127.0.0.1 on a random port plus a per-run token, because
+  asyncio has no AF_UNIX server on Windows.
+
+Limits: no capture of minimized windows; the background click fallback reaches
+only classic Win32 controls; apps running as admin need an elevated daemon; a
+locked screen or UAC prompt blocks everything. See [install.md](install.md#windows).
 
 ## Security model — read before use
 
@@ -77,7 +95,7 @@ computer-harness is a "run code as me" tool, like a shell. Specifically:
 
 ## Status
 
-v0.1.0. macOS only. Verified end-to-end: background window capture, AX-action
+v0.1.0. macOS and Windows. Verified end-to-end: background window capture, AX-action
 clicks, direct text set-value, full-screen foreground input, and desktop video
 recording — all through the CLI/daemon. Not affiliated with OpenAI.
 

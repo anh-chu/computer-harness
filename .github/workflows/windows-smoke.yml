@@ -1,0 +1,30 @@
+name: windows-smoke
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: choco install ffmpeg -y --no-progress
+      - run: computer-harness --doctor
+      - run: python tests/smoke_windows.py
+        env:
+          PYTHONIOENCODING: utf-8
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captures-${{ matrix.os }}
+          path: ~/.computer-harness/

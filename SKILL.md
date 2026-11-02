@@ -24,7 +24,8 @@ PY
 - Invoke as `computer-harness` — it's on `$PATH`. No cd, no venv activation.
 - Use the heredoc form for every multi-line command (prevents shell quote mangling).
 - Helpers are pre-imported; the daemon auto-starts and holds the TCC grants.
-- macOS only. First run needs two permissions granted once (see install.md).
+- macOS and Windows. On macOS, first run needs two permissions granted once (see
+  install.md). On Windows, read the Windows section at the end.
 
 ## Non-disturbance is a HARD DEFAULT — ALWAYS APPLY
 
@@ -192,3 +193,30 @@ computer-harness --help
   their a11y tree (AX sees all Spaces) but the screenshot comes back `None`,
   because `CGWindowListCreateImage` only has backing-store pixels for the current
   Space. Move the window to the active Space, or drive it AX-only (blind).
+
+## Windows
+
+Same helpers, same heredoc. What differs:
+
+- **Apps are found by exe name or window title**: `get_app_state("notepad")`,
+  `get_app_state("Calculator")` (UWP apps live in ApplicationFrameHost, so use
+  the title). `bundle_id` in `list_apps()` is the exe path.
+- **Roles are UI Automation names**: `ButtonControl`, `EditControl`,
+  `CheckBoxControl`, `MenuItemControl`, … Each element lists its `actions`:
+  `Invoke`, `Toggle`, `Select`, `Expand`/`Collapse`, `DefaultAction`.
+  `click(app, i)` tries them in that order; `perform_action` accepts these names
+  and the AX aliases `AXPress` and `AXShowMenu`.
+- **Coordinates are physical pixels** (the daemon is DPI aware). Screenshots are
+  still 1:1 with click coordinates.
+- **`cmd` in a chord means `ctrl`** (`press_key("cmd+c")` sends Ctrl+C). Use
+  `win` for the Windows key.
+- **Background click fallback is weak.** Without a UIA action, `click` posts
+  window messages, which only classic Win32 controls honour. Chromium, Electron
+  and UWP content need `method="foreground"`.
+- **`capture_window` fails on minimized windows.** Covered windows are fine.
+- **Apps running as admin are out of reach** unless the daemon also runs
+  elevated. `permissions()["elevated"]` tells you which.
+- **Needs an unlocked, signed-in desktop.** Not a service, not an SSH session,
+  not while a UAC prompt or the lock screen shows.
+- **Recording needs ffmpeg on PATH** and writes `.mp4`. `display` and
+  `show_clicks` are ignored; `audio=True` raises.

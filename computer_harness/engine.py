@@ -423,6 +423,11 @@ def _resolve_app(identifier):
     return None
 
 
+def app_pid(identifier):
+    app = _resolve_app(identifier)
+    return int(app.processIdentifier()) if app else None
+
+
 def activate_app(identifier):
     app = _resolve_app(identifier)
     if not app:

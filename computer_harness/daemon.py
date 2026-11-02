@@ -13,7 +13,11 @@ import time
 import traceback
 
 from . import ipc
-from . import engine
+
+if sys.platform == "win32":
+    from . import engine_win as engine
+else:
+    from . import engine
 
 _START = time.time()
 _LAST_STATE = {}  # app identifier (lowercased) -> get_app_state() result
@@ -30,10 +34,13 @@ def _handle(req):
     a = req.get("args", {}) or {}
 
     if op == "permissions":
-        return {
+        perms = {
             "accessibility": engine.has_accessibility(),
             "screen_recording": engine.has_screen_recording(),
         }
+        if hasattr(engine, "is_elevated"):
+            perms["elevated"] = engine.is_elevated()
+        return perms
     if op == "screen_info":
         w, h = engine.logical_size()
         return {"width": w, "height": h, "scale": engine.backing_scale()}
@@ -42,8 +49,7 @@ def _handle(req):
     if op == "list_windows":
         pid = a.get("pid")
         if pid is None and a.get("app"):
-            app = engine._resolve_app(a["app"])
-            pid = int(app.processIdentifier()) if app else None
+            pid = engine.app_pid(a["app"])
         return {"windows": engine.list_windows(pid=pid)}
     if op == "activate_app":
         return engine.activate_app(a["app"])
@@ -62,7 +68,8 @@ def _handle(req):
 
     if op == "record_start":
         ts = int(time.time() * 1000)
-        path = a.get("path") or str(ipc.recording_dir() / f"rec-{ts}.mov")
+        ext = getattr(engine, "REC_EXT", ".mov")
+        path = a.get("path") or str(ipc.recording_dir() / f"rec-{ts}{ext}")
         return engine.start_recording(
             a.get("name", "screen"), path, seconds=a.get("seconds"),
             region=a.get("region"), display=a.get("display", 1),
