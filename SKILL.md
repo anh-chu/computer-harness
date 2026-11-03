@@ -1,3 +1,8 @@
+---
+name: computer-harness
+description: Control native macOS and Windows apps with computer-harness. Background window screenshots, an indexed accessibility tree, and click or set-value without moving the cursor or stealing focus, plus opt-in foreground mouse and keyboard. Use when a task needs a native desktop app (not a web page), a screenshot of a window or the screen, a screen recording, or the user says "computer-harness" or "control the app".
+---
+
 # computer-harness
 
 Direct native-app control on macOS (CoreGraphics input, CGWindowList pixels,
